@@ -36,8 +36,8 @@ const unsigned int ENC_KEY_LEN = T3F_KEY_LEN + T3F_TWEAK_LEN + T3F_IV_LEN +
 
 const unsigned char header[HEADER_LEN] = {'t', '3', 'f', 'c', '0', '1'};
 
-const uint32_t T = 3;
-const uint32_t M = 1 << 10;
+const uint32_t T = 9;
+const uint32_t M = 1 << 19;
 const uint32_t P = 1;
 
 void check_fatal_err(bool cond, const char *msg) {
@@ -166,7 +166,6 @@ int main(int argc, char **argv) {
                     return EXIT_SUCCESS;
                 }
             }
-
             get_master_key(argv[3], master_key);
             FILE *input = t3fc_fopen(argv[5], "rb");
             FILE *output = t3fc_fopen(argv[7], "wb");
@@ -216,7 +215,7 @@ void encrypt(FILE *input, FILE *output, unsigned char *master_key) {
     CryptoPP::SecByteBlock kl_iv(KL_IV_LEN);
     memcpy(t3f_iv.data(), &enc_key[T3F_KEY_LEN + T3F_TWEAK_LEN], T3F_IV_LEN);
     memcpy(kl_iv.data(), &enc_key[T3F_KEY_LEN + T3F_TWEAK_LEN + T3F_IV_LEN + KL_KEY_LEN], KL_IV_LEN);
-    while ((chunk_len = fread(chunk, sizeof(unsigned char), CHUNK_LEN, input)) > 0) {
+    while ((chunk_len = fread(chunk, 1, CHUNK_LEN, input)) > 0) {
         check_fatal_err(chunk_len != CHUNK_LEN && ferror(input), "cannot read input.");
         if (chunk_len < CHUNK_LEN) {
             check_fatal_err(sodium_pad(&chunk_len, chunk, chunk_len, T3F_BLOCK_LEN, CHUNK_LEN) != 0, "buffer is not large enough.");
