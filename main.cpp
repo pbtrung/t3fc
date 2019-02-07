@@ -123,10 +123,8 @@ int sodium_unpad(size_t *unpadded_buflen_p, const unsigned char *buf,
 
 void get_master_key(const char *keyfile, unsigned char *master_key) {
     FILE *f = t3fc_fopen(keyfile, "rb");
-    check_fatal_err(stb_filelen(f) != MASTER_KEY_LEN,
-                    "keyfile must have exactly 256 bytes.");
-    check_fatal_err(fread(master_key, 1, MASTER_KEY_LEN, f) != MASTER_KEY_LEN,
-                    "cannot read key from file.");
+    check_fatal_err(stb_filelen(f) != MASTER_KEY_LEN, "keyfile must have exactly 256 bytes.");
+    check_fatal_err(fread(master_key, 1, MASTER_KEY_LEN, f) != MASTER_KEY_LEN, "cannot read key from file.");
     fclose(f);
 }
 
@@ -156,13 +154,11 @@ int main(int argc, char **argv) {
             if (stb_fexists(argv[7])) {
                 std::string yn;
                 do {
-                    std::cout << "File exists. Do you want to overwrite? (y/n) "
-                              << std::flush;
+                    std::cout << "File exists. Do you want to overwrite? (y/n) " << std::flush;
                     std::cin >> yn;
                 } while (yn != "n" && yn != "N" && yn != "y" && yn != "Y");
                 if (yn == "n" || yn == "N") {
-                    std::cout << "Please choose a different output file."
-                              << std::endl;
+                    std::cout << "Please choose a different output file." << std::endl;
                     return EXIT_SUCCESS;
                 }
             }
