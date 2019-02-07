@@ -5,7 +5,7 @@ Algorithms:
 * Kalyna: 512-bit key/block in CBC mode
 * ISO/IEC 7816-4 padding
 * HMAC-SHA3-512
-* Argon2id: version 1.3, 512-bit salt, (T, M, P) = (9, 2^19, 1) (2^19 kibibytes of memory &asymp; 537 megabytes)
+* Argon2id: version 1.3, 512-bit random salt, (T, M, P) = (9, 2^19, 1) (2^19 kibibytes of memory &asymp; 537 megabytes)
 
 Dependency: [Crypto++](https://www.cryptopp.com)
 
