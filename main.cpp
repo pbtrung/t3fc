@@ -226,8 +226,7 @@ void encrypt(FILE *input, FILE *output, unsigned char *master_key) {
     std::cout << "encrypt " << timer.ElapsedTimeAsDouble() << std::endl;
 }
 void t3f_encrypt_chunk(CryptoPP::Threefish1024::Encryption &t3f, unsigned char *chunk, size_t chunk_len, unsigned char *t3f_iv) {
-    uint32_t i = 0;
-    for (; chunk_len >= T3F_BLOCK_LEN; ++i, chunk_len -= T3F_BLOCK_LEN) {
+    for (uint32_t i = 0; chunk_len >= T3F_BLOCK_LEN; ++i, chunk_len -= T3F_BLOCK_LEN) {
         for (uint32_t j = 0; j < T3F_BLOCK_LEN; ++j) {
             chunk[i * T3F_BLOCK_LEN + j] = t3f_iv[j] ^ chunk[i * T3F_BLOCK_LEN + j];
         }
@@ -237,8 +236,7 @@ void t3f_encrypt_chunk(CryptoPP::Threefish1024::Encryption &t3f, unsigned char *
     check_fatal_err(chunk_len != 0, "plaintext must be a multiple of the block size (128 bytes).");
 }
 void kl_encrypt_chunk(CryptoPP::Kalyna512::Encryption &kl, unsigned char *chunk, size_t chunk_len, unsigned char *kl_iv) {
-    uint32_t i = 0;
-    for (; chunk_len >= KL_BLOCK_LEN; ++i, chunk_len -= KL_BLOCK_LEN) {
+    for (uint32_t i = 0; chunk_len >= KL_BLOCK_LEN; ++i, chunk_len -= KL_BLOCK_LEN) {
         for (uint32_t j = 0; j < KL_BLOCK_LEN; ++j) {
             chunk[i * KL_BLOCK_LEN + j] = kl_iv[j] ^ chunk[i * KL_BLOCK_LEN + j];
         }
@@ -299,9 +297,8 @@ void decrypt(FILE *input, FILE *output, unsigned char *master_key) {
     std::cout << "decrypt " << timer.ElapsedTimeAsDouble() << std::endl;
 }
 void t3f_decrypt_chunk(CryptoPP::Threefish1024::Decryption &t3f, unsigned char *chunk, size_t chunk_len, unsigned char *t3f_iv) {
-    uint32_t i = 0;
     unsigned char tmp[T3F_BLOCK_LEN];
-    for (; chunk_len >= T3F_BLOCK_LEN; ++i, chunk_len -= T3F_BLOCK_LEN) {
+    for (uint32_t i = 0; chunk_len >= T3F_BLOCK_LEN; ++i, chunk_len -= T3F_BLOCK_LEN) {
         memcpy(tmp, &chunk[i * T3F_BLOCK_LEN], T3F_BLOCK_LEN);
         t3f.ProcessBlock(&chunk[i * T3F_BLOCK_LEN], &chunk[i * T3F_BLOCK_LEN]);
         for (uint32_t j = 0; j < T3F_BLOCK_LEN; ++j) {
@@ -312,9 +309,8 @@ void t3f_decrypt_chunk(CryptoPP::Threefish1024::Decryption &t3f, unsigned char *
     check_fatal_err(chunk_len != 0, "plaintext must be a multiple of the block size (128 bytes).");
 }
 void kl_decrypt_chunk(CryptoPP::Kalyna512::Decryption &kl, unsigned char *chunk, size_t chunk_len, unsigned char *kl_iv) {
-    uint32_t i = 0;
     unsigned char tmp[KL_BLOCK_LEN];
-    for (; chunk_len >= KL_BLOCK_LEN; ++i, chunk_len -= KL_BLOCK_LEN) {
+    for (uint32_t i = 0; chunk_len >= KL_BLOCK_LEN; ++i, chunk_len -= KL_BLOCK_LEN) {
         memcpy(tmp, &chunk[i * KL_BLOCK_LEN], KL_BLOCK_LEN);
         kl.ProcessBlock(&chunk[i * KL_BLOCK_LEN], &chunk[i * KL_BLOCK_LEN]);
         for (uint32_t j = 0; j < KL_BLOCK_LEN; ++j) {
