@@ -12,7 +12,6 @@
 #include "stb/stb_lib.h"
 
 #include "argon2/argon2.h"
-#include "randombytes/randombytes.h"
 
 const unsigned int T3F_TWEAK_LEN = 16;
 const unsigned int T3F_KEY_LEN = 128;
@@ -137,7 +136,7 @@ int main(int argc, char **argv) {
     CryptoPP::SecByteBlock master_key(MASTER_KEY_LEN);
     try {
         if (argc == 3 && strcmp(argv[1], "-kf") == 0) {
-            randombytes(master_key, MASTER_KEY_LEN);
+            CryptoPP::OS_GenerateRandomBlock(false, master_key, MASTER_KEY_LEN);
             FILE *master_key_file = t3fc_fopen(argv[2], "wb");
             check_fatal_err(fwrite(master_key, 1, MASTER_KEY_LEN, master_key_file) != MASTER_KEY_LEN, "cannot write master key to file.");
             fclose(master_key_file);
@@ -184,7 +183,7 @@ void encrypt(FILE *input, FILE *output, unsigned char *master_key) {
 
     check_fatal_err(fwrite(header, 1, HEADER_LEN, output) != HEADER_LEN, "cannot write header.");
     unsigned char salt[SALT_LEN];
-    randombytes(salt, SALT_LEN);
+    CryptoPP::OS_GenerateRandomBlock(false, salt, SALT_LEN);
     check_fatal_err(fwrite(salt, 1, SALT_LEN, output) != SALT_LEN, "cannot write salt.");
 
     CryptoPP::SecByteBlock enc_key(ENC_KEY_LEN);

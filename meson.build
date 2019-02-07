@@ -38,7 +38,7 @@ threads = dependency('threads')
 dependencies = [threads, libcryptopp]
 
 executable('t3fc',
-		   sources : ['main.cpp', 'randombytes/randombytes.c'],
-		   link_with : [libargon2],
+		   sources : 'main.cpp',
+		   link_with : libargon2,
            dependencies : dependencies,
            install : false)
