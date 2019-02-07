@@ -18,7 +18,7 @@ const unsigned int T3F_TWEAK_LEN = 16;
 const unsigned int T3F_KEY_LEN = 128;
 const unsigned int T3F_BLOCK_LEN = 128;
 const unsigned int T3F_IV_LEN = 128;
-const unsigned int NUM_BLOCKS = 2048;
+const unsigned int NUM_BLOCKS = 2;
 const unsigned int CHUNK_LEN = NUM_BLOCKS * T3F_BLOCK_LEN;
 
 const unsigned int MASTER_KEY_LEN = 256;
@@ -36,8 +36,8 @@ const unsigned int ENC_KEY_LEN = T3F_KEY_LEN + T3F_TWEAK_LEN + T3F_IV_LEN +
 
 const unsigned char header[HEADER_LEN] = {'t', '3', 'f', 'c', '0', '1'};
 
-const uint32_t T = 9;
-const uint32_t M = 1 << 19;
+const uint32_t T = 3;
+const uint32_t M = 1 << 10;
 const uint32_t P = 1;
 
 void check_fatal_err(bool cond, const char *msg) {
@@ -51,74 +51,6 @@ FILE *t3fc_fopen(const char *path, const char *flags) {
     FILE *f = stb__fopen(path, flags);
     check_fatal_err(f == NULL, "cannot open file.");
     return f;
-}
-
-int sodium_pad(size_t *padded_buflen_p, unsigned char *buf,
-               size_t unpadded_buflen, size_t blocksize, size_t max_buflen) {
-    unsigned char *tail;
-    size_t i;
-    size_t xpadlen;
-    size_t xpadded_len;
-    volatile unsigned char mask;
-    unsigned char barrier_mask;
-
-    if (blocksize <= 0U) {
-        return -1;
-    }
-    xpadlen = blocksize - 1U;
-    if ((blocksize & (blocksize - 1U)) == 0U) {
-        xpadlen -= unpadded_buflen & (blocksize - 1U);
-    } else {
-        xpadlen -= unpadded_buflen % blocksize;
-    }
-
-    check_fatal_err((size_t)SIZE_MAX - unpadded_buflen <= xpadlen,
-                    "cannot add padding.");
-
-    xpadded_len = unpadded_buflen + xpadlen;
-    if (xpadded_len >= max_buflen) {
-        return -1;
-    }
-    tail = &buf[xpadded_len];
-    if (padded_buflen_p != NULL) {
-        *padded_buflen_p = xpadded_len + 1U;
-    }
-    mask = 0U;
-    for (i = 0; i < blocksize; i++) {
-        barrier_mask = (unsigned char)(((i ^ xpadlen) - 1U) >>
-                                       ((sizeof(size_t) - 1) * CHAR_BIT));
-        *(tail - i) = ((*(tail - i)) & mask) | (0x80 & barrier_mask);
-        mask |= barrier_mask;
-    }
-    return 0;
-}
-
-int sodium_unpad(size_t *unpadded_buflen_p, const unsigned char *buf,
-                 size_t padded_buflen, size_t blocksize) {
-    const unsigned char *tail;
-    unsigned char acc = 0U;
-    unsigned char c;
-    unsigned char valid = 0U;
-    volatile size_t pad_len = 0U;
-    size_t i;
-    size_t is_barrier;
-
-    if (padded_buflen < blocksize || blocksize <= 0U) {
-        return -1;
-    }
-    tail = &buf[padded_buflen - 1U];
-
-    for (i = 0U; i < blocksize; i++) {
-        c = *(tail - i);
-        is_barrier =
-            (((acc - 1U) & (pad_len - 1U) & ((c ^ 0x80) - 1U)) >> 8) & 1U;
-        acc |= c;
-        pad_len |= i & (1U + ~is_barrier);
-        valid |= (unsigned char)is_barrier;
-    }
-    *unpadded_buflen_p = padded_buflen - 1U - pad_len;
-
-    return (int)(valid - 1U);
 }
 
 void get_master_key(const char *keyfile, unsigned char *master_key) {
@@ -210,16 +142,13 @@ void encrypt(FILE *input, FILE *output, unsigned char *master_key) {
     hmac.Update(salt, SALT_LEN);
 
     CryptoPP::SecByteBlock chunk(CHUNK_LEN);
-    size_t chunk_len = CHUNK_LEN;
+    size_t chunk_len = 0;
     CryptoPP::SecByteBlock t3f_iv(T3F_IV_LEN);
     CryptoPP::SecByteBlock kl_iv(KL_IV_LEN);
     memcpy(t3f_iv.data(), &enc_key[T3F_KEY_LEN + T3F_TWEAK_LEN], T3F_IV_LEN);
     memcpy(kl_iv.data(), &enc_key[T3F_KEY_LEN + T3F_TWEAK_LEN + T3F_IV_LEN + KL_KEY_LEN], KL_IV_LEN);
     while ((chunk_len = fread(chunk, 1, CHUNK_LEN, input)) > 0) {
         check_fatal_err(chunk_len != CHUNK_LEN && ferror(input), "cannot read input.");
-        if (chunk_len < CHUNK_LEN) {
-            check_fatal_err(sodium_pad(&chunk_len, chunk, chunk_len, T3F_BLOCK_LEN, CHUNK_LEN) != 0, "buffer is not large enough.");
-        }
         t3f_encrypt_chunk(t3f, chunk, chunk_len, t3f_iv);
         kl_encrypt_chunk(kl, chunk, chunk_len, kl_iv);
         hmac.Update(chunk, chunk_len);
@@ -232,7 +161,7 @@ void encrypt(FILE *input, FILE *output, unsigned char *master_key) {
     std::cout << "encrypt " << timer.ElapsedTimeAsDouble() << std::endl;
 }
 
-void t3f_encrypt_chunk(CryptoPP::Threefish1024::Encryption &t3f, unsigned char *chunk, size_t chunk_len, unsigned char *t3f_iv) {
+void t3f_encrypt(CryptoPP::Threefish1024::Encryption &t3f, unsigned char *chunk, size_t chunk_len, unsigned char *t3f_iv) {
     uint32_t i = 0;
     for (; chunk_len >= T3F_BLOCK_LEN; ++i, chunk_len -= T3F_BLOCK_LEN) {
         for (uint32_t j = 0; j < T3F_BLOCK_LEN; ++j) {
@@ -243,7 +172,29 @@ void t3f_encrypt_chunk(CryptoPP::Threefish1024::Encryption &t3f, unsigned char *
     }
     check_fatal_err(chunk_len != 0, "plaintext must be a multiple of the block size (128 bytes).");
 }
-void kl_encrypt_chunk(CryptoPP::Kalyna512::Encryption &kl, unsigned char *chunk, size_t chunk_len, unsigned char *kl_iv) {
+void t3f_encrypt_chunk(CryptoPP::Threefish1024::Encryption &t3f, unsigned char *chunk, size_t chunk_len, unsigned char *t3f_iv) {
+    size_t tail = chunk_len % T3F_BLOCK_LEN;
+    if (tail == 0) {
+        t3f_encrypt(t3f, chunk, chunk_len, t3f_iv);
+    } else {
+        size_t new_chunk_len = chunk_len + T3F_BLOCK_LEN - tail;
+        memset(&chunk[chunk_len], 0, T3F_BLOCK_LEN - tail);
+        if (chunk_len < T3F_BLOCK_LEN) {
+            for (uint32_t j = 0; j < T3F_BLOCK_LEN; ++j) {
+                chunk[j] = t3f_iv[j] ^ chunk[j];
+            }
+            t3f.ProcessBlock(chunk, chunk);
+            memcpy(&chunk[T3F_BLOCK_LEN], t3f_iv, T3F_BLOCK_LEN);
+        } else {
+            unsigned char tmp[T3F_BLOCK_LEN];
+            t3f_encrypt(t3f, chunk, new_chunk_len, t3f_iv);
+            memcpy(tmp, &chunk[chunk_len - tail], T3F_BLOCK_LEN);
+            memcpy(&chunk[chunk_len - tail], &chunk[chunk_len - T3F_BLOCK_LEN - tail], T3F_BLOCK_LEN);
+            memcpy(&chunk[chunk_len - T3F_BLOCK_LEN - tail], tmp, T3F_BLOCK_LEN);
+        }
+    }
+}
+void kl_encrypt(CryptoPP::Kalyna512::Encryption &kl, unsigned char *chunk, size_t chunk_len, unsigned char *kl_iv) {
     uint32_t i = 0;
     for (; chunk_len >= KL_BLOCK_LEN; ++i, chunk_len -= KL_BLOCK_LEN) {
         for (uint32_t j = 0; j < KL_BLOCK_LEN; ++j) {
@@ -253,6 +204,23 @@ void kl_encrypt_chunk(CryptoPP::Kalyna512::Encryption &kl, unsigned char *chunk,
         memcpy(kl_iv, &chunk[i * KL_BLOCK_LEN], KL_BLOCK_LEN);
     }
     check_fatal_err(chunk_len != 0, "plaintext must be a multiple of the block size (64 bytes).");
+}
+void kl_encrypt_chunk(CryptoPP::Kalyna512::Encryption &kl, unsigned char *chunk, size_t chunk_len, unsigned char *kl_iv) {
+    size_t tail = chunk_len % KL_BLOCK_LEN;
+    if (tail == 0) {
+        kl_encrypt(kl, chunk, chunk_len, kl_iv);
+    } else {
+        if (chunk_len < KL_BLOCK_LEN) {
+        } else {
+            size_t new_chunk_len = chunk_len + KL_BLOCK_LEN - tail;
+            memset(&chunk[chunk_len], 0, KL_BLOCK_LEN - tail);
+            kl_encrypt(kl, chunk, new_chunk_len, kl_iv);
+            unsigned char tmp[KL_BLOCK_LEN];
+            memcpy(tmp, &chunk[chunk_len - tail], KL_BLOCK_LEN);
+            memcpy(&chunk[chunk_len - tail], &chunk[chunk_len - KL_BLOCK_LEN - tail], KL_BLOCK_LEN);
+            memcpy(&chunk[chunk_len - KL_BLOCK_LEN - tail], tmp, KL_BLOCK_LEN);
+        }
+    }
 }
 
 void decrypt(FILE *input, FILE *output, unsigned char *master_key) {
@@ -278,37 +246,34 @@ void decrypt(FILE *input, FILE *output, unsigned char *master_key) {
     hmac.Update(salt, SALT_LEN);
     
     CryptoPP::SecByteBlock chunk(CHUNK_LEN);
-    size_t infile_len = stb_filelen(input) - (HEADER_LEN + SALT_LEN + HMAC_HASH_LEN);
-    size_t num_read = infile_len / CHUNK_LEN + (infile_len % CHUNK_LEN != 0);
-    size_t chunk_len = CHUNK_LEN;
+    size_t chunk_len = 0;
+    unsigned char read_hash[HMAC_HASH_LEN];
     CryptoPP::SecByteBlock t3f_iv(T3F_IV_LEN);
     CryptoPP::SecByteBlock kl_iv(KL_IV_LEN);
     memcpy(t3f_iv.data(), &enc_key[T3F_KEY_LEN + T3F_TWEAK_LEN], T3F_IV_LEN);
     memcpy(kl_iv.data(), &enc_key[T3F_KEY_LEN + T3F_TWEAK_LEN + T3F_IV_LEN + KL_KEY_LEN], KL_IV_LEN);
-    for (size_t i = 0; i < num_read; ++i) {
-        if (i == num_read - 1) {
-            chunk_len = infile_len - i * CHUNK_LEN;
-        }
-        chunk_len = fread(chunk, 1, chunk_len, input);
+    while ((chunk_len = fread(chunk, 1, CHUNK_LEN, input)) > 0) {
         check_fatal_err(chunk_len != CHUNK_LEN && ferror(input), "cannot read input.");
+        if (chunk_len < CHUNK_LEN && chunk_len > HMAC_HASH_LEN) {
+            chunk_len -= HMAC_HASH_LEN;
+            memcpy(read_hash, &chunk[chunk_len], HMAC_HASH_LEN);
+        } else if (chunk_len == HMAC_HASH_LEN) {
+            memcpy(read_hash, chunk, HMAC_HASH_LEN);
+            break;
+        }
         hmac.Update(chunk, chunk_len);
         kl_decrypt_chunk(kl, chunk, chunk_len, kl_iv);
         t3f_decrypt_chunk(t3f, chunk, chunk_len, t3f_iv);
-        if (i == num_read - 1) {
-            check_fatal_err(sodium_unpad(&chunk_len, chunk, chunk_len, T3F_BLOCK_LEN) != 0, "incorrect padding.");
-        }
         check_fatal_err(fwrite(chunk, 1, chunk_len, output) != chunk_len, "cannot write to file.");
     }
-    chunk_len = fread(chunk, 1, HMAC_HASH_LEN, input);
-    check_fatal_err(chunk_len != HMAC_HASH_LEN && ferror(input), "cannot read input.");
     unsigned char hash[HMAC_HASH_LEN];
     hmac.Final(hash);
-    check_fatal_err(memcmp(hash, chunk, HMAC_HASH_LEN) != 0, "wrong HMAC.");
+    check_fatal_err(memcmp(hash, read_hash, HMAC_HASH_LEN) != 0, "wrong HMAC.");
                     
     std::cout << "decrypt " << timer.ElapsedTimeAsDouble() << std::endl;
 }
 
-void t3f_decrypt_chunk(CryptoPP::Threefish1024::Decryption &t3f, unsigned char *chunk, size_t chunk_len, unsigned char *t3f_iv) {
+void t3f_decrypt(CryptoPP::Threefish1024::Decryption &t3f, unsigned char *chunk, size_t chunk_len, unsigned char *t3f_iv) {
     uint32_t i = 0;
     unsigned char tmp[T3F_BLOCK_LEN];
     for (; chunk_len >= T3F_BLOCK_LEN; ++i, chunk_len -= T3F_BLOCK_LEN) {
@@ -321,7 +286,26 @@ void t3f_decrypt_chunk(CryptoPP::Threefish1024::Decryption &t3f, unsigned char *
     }
     check_fatal_err(chunk_len != 0, "plaintext must be a multiple of the block size (128 bytes).");
 }
-void kl_decrypt_chunk(CryptoPP::Kalyna512::Decryption &kl, unsigned char *chunk, size_t chunk_len, unsigned char *kl_iv) {
+void t3f_decrypt_chunk(CryptoPP::Threefish1024::Decryption &t3f, unsigned char *chunk, size_t chunk_len, unsigned char *t3f_iv) {
+    size_t tail = chunk_len % T3F_BLOCK_LEN;
+    if (tail == 0) {
+        t3f_decrypt(t3f, chunk, chunk_len, t3f_iv);
+    } else {
+        if (chunk_len < T3F_BLOCK_LEN) {
+            t3f_decrypt(t3f, chunk, chunk_len, t3f_iv);
+        } else {
+            unsigned char tmp[T3F_BLOCK_LEN];
+            t3f.ProcessBlock(&chunk[chunk_len - T3F_BLOCK_LEN - tail], tmp);
+            memcpy(&chunk[chunk_len], &tmp[tail], T3F_BLOCK_LEN - tail);
+            memcpy(tmp, &chunk[chunk_len - tail], T3F_BLOCK_LEN);
+            memcpy(&chunk[chunk_len - tail], &chunk[chunk_len - T3F_BLOCK_LEN - tail], T3F_BLOCK_LEN);
+            memcpy(&chunk[chunk_len - T3F_BLOCK_LEN - tail], tmp, T3F_BLOCK_LEN);
+            size_t new_chunk_len = chunk_len + T3F_BLOCK_LEN - tail;
+            t3f_decrypt(t3f, chunk, new_chunk_len, t3f_iv);
+        }
+    }
+}
+void kl_decrypt(CryptoPP::Kalyna512::Decryption &kl, unsigned char *chunk, size_t chunk_len, unsigned char *kl_iv) {
     uint32_t i = 0;
     unsigned char tmp[KL_BLOCK_LEN];
     for (; chunk_len >= KL_BLOCK_LEN; ++i, chunk_len -= KL_BLOCK_LEN) {
@@ -333,6 +317,21 @@ void kl_decrypt_chunk(CryptoPP::Kalyna512::Decryption &kl, unsigned char *chunk,
         memcpy(kl_iv, tmp, KL_BLOCK_LEN);
     }
     check_fatal_err(chunk_len != 0, "plaintext must be a multiple of the block size (64 bytes).");
+}
+void kl_decrypt_chunk(CryptoPP::Kalyna512::Decryption &kl, unsigned char *chunk, size_t chunk_len, unsigned char *kl_iv) {
+    size_t tail = chunk_len % KL_BLOCK_LEN;
+    if (tail == 0) {
+        kl_decrypt(kl, chunk, chunk_len, kl_iv);
+    } else {
+        unsigned char tmp[KL_BLOCK_LEN];
+        kl.ProcessBlock(&chunk[chunk_len - KL_BLOCK_LEN - tail], tmp);
+        memcpy(&chunk[chunk_len], &tmp[tail], KL_BLOCK_LEN - tail);
+        memcpy(tmp, &chunk[chunk_len - tail], KL_BLOCK_LEN);
+        memcpy(&chunk[chunk_len - tail], &chunk[chunk_len - KL_BLOCK_LEN - tail], KL_BLOCK_LEN);
+        memcpy(&chunk[chunk_len - KL_BLOCK_LEN - tail], tmp, KL_BLOCK_LEN);
+        size_t new_chunk_len = chunk_len + KL_BLOCK_LEN - tail;
+        kl_decrypt(kl, chunk, new_chunk_len, kl_iv);
+    }
 }
 
 void make_key(unsigned char *master_key, unsigned char *enc_key, unsigned char *salt) {
