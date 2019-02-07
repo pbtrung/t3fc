@@ -18,7 +18,7 @@ const unsigned int T3F_TWEAK_LEN = 16;
 const unsigned int T3F_KEY_LEN = 128;
 const unsigned int T3F_BLOCK_LEN = 128;
 const unsigned int T3F_IV_LEN = 128;
-const unsigned int NUM_BLOCKS = 2;
+const unsigned int NUM_BLOCKS = 2048;
 const unsigned int CHUNK_LEN = NUM_BLOCKS * T3F_BLOCK_LEN;
 
 const unsigned int MASTER_KEY_LEN = 256;
@@ -36,8 +36,8 @@ const unsigned int ENC_KEY_LEN = T3F_KEY_LEN + T3F_TWEAK_LEN + T3F_IV_LEN +
 
 const unsigned char header[HEADER_LEN] = {'t', '3', 'f', 'c', '0', '1'};
 
-const uint32_t T = 3;
-const uint32_t M = 1 << 10;
+const uint32_t T = 9;
+const uint32_t M = 1 << 19;
 const uint32_t P = 1;
 
 void check_fatal_err(bool cond, const char *msg) {
@@ -252,29 +252,27 @@ void decrypt(FILE *input, FILE *output, unsigned char *master_key) {
     hmac.Update(salt, SALT_LEN);
     
     CryptoPP::SecByteBlock chunk(CHUNK_LEN);
-    size_t chunk_len = 0;
-    unsigned char read_hash[HMAC_HASH_LEN];
+    size_t chunk_len = CHUNK_LEN;
+    size_t in_file_size = stb_filelen(input) - (HEADER_LEN + SALT_LEN + HMAC_HASH_LEN);
     CryptoPP::SecByteBlock t3f_iv(T3F_IV_LEN);
     CryptoPP::SecByteBlock kl_iv(KL_IV_LEN);
     memcpy(t3f_iv.data(), &enc_key[T3F_KEY_LEN + T3F_TWEAK_LEN], T3F_IV_LEN);
     memcpy(kl_iv.data(), &enc_key[T3F_KEY_LEN + T3F_TWEAK_LEN + T3F_IV_LEN + KL_KEY_LEN], KL_IV_LEN);
-    while ((chunk_len = fread(chunk, 1, CHUNK_LEN, input)) > 0) {
-        check_fatal_err(chunk_len != CHUNK_LEN && ferror(input), "cannot read input.");
-        if (chunk_len < CHUNK_LEN && chunk_len > HMAC_HASH_LEN) {
-            chunk_len -= HMAC_HASH_LEN;
-            memcpy(read_hash, &chunk[chunk_len], HMAC_HASH_LEN);
-        } else if (chunk_len == HMAC_HASH_LEN) {
-            memcpy(read_hash, chunk, HMAC_HASH_LEN);
-            break;
+    while (in_file_size > 0) {
+        if (in_file_size < CHUNK_LEN) {
+            chunk_len = in_file_size;
         }
+        check_fatal_err(fread(chunk, 1, chunk_len, input) != chunk_len, "cannot read input.");
         hmac.Update(chunk, chunk_len);
         kl_decrypt_chunk(kl_enc, kl_dec, chunk, chunk_len, kl_iv);
         t3f_decrypt_chunk(t3f_enc, t3f_dec, chunk, chunk_len, t3f_iv);
         check_fatal_err(fwrite(chunk, 1, chunk_len, output) != chunk_len, "cannot write to file.");
+        in_file_size -= chunk_len;
     }
+    check_fatal_err(fread(chunk, 1, HMAC_HASH_LEN, input) != HMAC_HASH_LEN, "cannot read input.");
     unsigned char hash[HMAC_HASH_LEN];
     hmac.Final(hash);
-    check_fatal_err(memcmp(hash, read_hash, HMAC_HASH_LEN) != 0, "wrong HMAC.");
+    check_fatal_err(memcmp(hash, chunk, HMAC_HASH_LEN) != 0, "wrong HMAC.");
                     
     std::cout << "decrypt " << timer.ElapsedTimeAsDouble() << std::endl;
 }
