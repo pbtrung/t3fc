@@ -271,6 +271,20 @@ void decrypt(FILE *input, FILE *output, unsigned char *master_key) {
 void make_key(unsigned char *master_key, unsigned char *enc_key, unsigned char *salt) {
     CryptoPP::Timer timer;
     timer.StartTimer();
-    check_fatal_err(argon2id_hash_raw(T, M, P, master_key, MASTER_KEY_LEN, salt, SALT_LEN, enc_key, ENC_KEY_LEN) != ARGON2_OK, "Argon2 failed.");
+    argon2_context ag2_ctx = {
+        enc_key,           /* output array */
+        ENC_KEY_LEN,       /* output length */
+        master_key,        /* password array */
+        MASTER_KEY_LEN,    /* password length */
+        salt,              /* salt array */
+        SALT_LEN,          /* salt length */
+        NULL, 0,           /* optional secret data */
+        NULL, 0,           /* optional associated data */
+        T, M, P, P,
+        ARGON2_VERSION_13, /* algorithm version */
+        NULL, NULL,        /* custom memory allocation / deallocation functions */
+        ARGON2_DEFAULT_FLAGS
+    };
+    check_fatal_err(argon2id_ctx(&ag2_ctx) != ARGON2_OK, "Argon2 failed.");
     std::cout << "argon2  " << timer.ElapsedTimeAsDouble() << std::endl;
 }
