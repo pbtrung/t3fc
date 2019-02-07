@@ -73,8 +73,7 @@ int sodium_pad(size_t *padded_buflen_p, unsigned char *buf,
         xpadlen -= unpadded_buflen % blocksize;
     }
 
-    check_fatal_err((size_t)SIZE_MAX - unpadded_buflen <= xpadlen,
-                    "cannot add padding.");
+    check_fatal_err((size_t)SIZE_MAX - unpadded_buflen <= xpadlen, "cannot add padding.");
 
     xpadded_len = unpadded_buflen + xpadlen;
     if (xpadded_len >= max_buflen) {
