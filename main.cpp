@@ -4,9 +4,10 @@
 #include <cryptopp/kalyna.h>
 #include <cryptopp/modes.h>
 #include <cryptopp/osrng.h>
-#include <cryptopp/pwdbased.h>
 #include <cryptopp/sha3.h>
+#include <cryptopp/blake2.h>
 #include <cryptopp/threefish.h>
+#include <cryptopp/hkdf.h>
 
 #define STB_LIB_IMPLEMENTATION
 #include "stb/stb_lib.h"
@@ -23,21 +24,22 @@ const unsigned int MAX_CHUNK_LEN = CHUNK_LEN + T3F_BLOCK_LEN;
 
 const unsigned int MASTER_KEY_LEN = 256;
 const unsigned int SALT_LEN = 64;
+const unsigned int B2B_SALT_LEN = 16;
+const unsigned int TOTAL_SALT_LEN = SALT_LEN * 4 + B2B_SALT_LEN;
 const unsigned int HEADER_LEN = 6;
 
 const unsigned int KL_KEY_LEN = 64;
 const unsigned int KL_IV_LEN = 64;
 const unsigned int KL_BLOCK_LEN = 64;
 
-const unsigned int HMAC_KEY_LEN = 64;
-const unsigned int HMAC_HASH_LEN = 64;
-const unsigned int ENC_KEY_LEN = T3F_KEY_LEN + T3F_TWEAK_LEN + T3F_IV_LEN +
-                                 KL_KEY_LEN + KL_IV_LEN + HMAC_KEY_LEN;
+const unsigned int B2B_MAC_KEY_LEN = 64;
+const unsigned int B2B_MAC_HASH_LEN = 64;
+const unsigned int ENC_KEY_LEN = MASTER_KEY_LEN * 2;
 
 const unsigned char header[HEADER_LEN] = {'t', '3', 'f', 'c', '0', '1'};
 
-const uint32_t T = 9;
-const uint32_t M = 1 << 19;
+const uint32_t T = 3;
+const uint32_t M = 1 << 10;
 const uint32_t P = 1;
 
 void check_fatal_err(bool cond, const char *msg) {
@@ -182,25 +184,49 @@ int main(int argc, char **argv) {
 void encrypt(FILE *input, FILE *output, unsigned char *master_key) {
 
     check_fatal_err(fwrite(header, 1, HEADER_LEN, output) != HEADER_LEN, "cannot write header.");
-    unsigned char salt[SALT_LEN];
-    CryptoPP::OS_GenerateRandomBlock(false, salt, SALT_LEN);
-    check_fatal_err(fwrite(salt, 1, SALT_LEN, output) != SALT_LEN, "cannot write salt.");
+    unsigned char salt[TOTAL_SALT_LEN];
+    CryptoPP::OS_GenerateRandomBlock(false, salt, TOTAL_SALT_LEN);
+    check_fatal_err(fwrite(salt, 1, TOTAL_SALT_LEN, output) != TOTAL_SALT_LEN, "cannot write salt.");
 
     CryptoPP::SecByteBlock enc_key(ENC_KEY_LEN);
     make_key(master_key, enc_key, salt);
+    CryptoPP::SecureWipeBuffer(master_key, MASTER_KEY_LEN);
 
     CryptoPP::Timer timer;
     timer.StartTimer();
-    CryptoPP::ConstByteArrayParameter tweak(&enc_key[T3F_KEY_LEN], T3F_TWEAK_LEN, false);
+    
+    CryptoPP::HKDF<CryptoPP::SHA3_512> hkdf;
+    
+    CryptoPP::SecByteBlock t3f_secrets(T3F_KEY_LEN + T3F_TWEAK_LEN + T3F_IV_LEN);
+    CryptoPP::byte t3f_info[] = "Threefish 1024-bit key, 128-bit tweak, and 1024-bit block";
+    size_t t3f_info_len = strlen((const char *)t3f_info);
+    hkdf.DeriveKey(t3f_secrets, t3f_secrets.size(), enc_key, ENC_KEY_LEN, &salt[SALT_LEN], SALT_LEN, t3f_info, t3f_info_len);
+    CryptoPP::ConstByteArrayParameter tweak(&t3f_secrets[T3F_KEY_LEN], T3F_TWEAK_LEN, false);
     CryptoPP::AlgorithmParameters t3f_params = CryptoPP::MakeParameters(CryptoPP::Name::Tweak(), tweak);
-    CryptoPP::Threefish1024::Encryption t3f(enc_key, T3F_KEY_LEN);
+    CryptoPP::Threefish1024::Encryption t3f(t3f_secrets, T3F_KEY_LEN);
     t3f.SetTweak(t3f_params);
-    CryptoPP::CBC_Mode_ExternalCipher::Encryption t3f_cbc(t3f, &enc_key[T3F_KEY_LEN + T3F_TWEAK_LEN]);
+    CryptoPP::CBC_Mode_ExternalCipher::Encryption t3f_cbc(t3f, &t3f_secrets[T3F_KEY_LEN + T3F_TWEAK_LEN]);
+    
+    CryptoPP::SecByteBlock kl_secrets(KL_KEY_LEN + KL_IV_LEN);
+    CryptoPP::byte kl_info[] = "Kalyna 512-bit key, and 512-bit block";
+    size_t kl_info_len = strlen((const char *)kl_info);
+    hkdf.DeriveKey(kl_secrets, kl_secrets.size(), enc_key, ENC_KEY_LEN, &salt[SALT_LEN * 2], SALT_LEN, kl_info, kl_info_len);
     CryptoPP::CBC_Mode<CryptoPP::Kalyna512>::Encryption kl_cbc;
-    kl_cbc.SetKeyWithIV(&enc_key[T3F_KEY_LEN + T3F_TWEAK_LEN + T3F_IV_LEN], KL_KEY_LEN, &enc_key[T3F_KEY_LEN + T3F_TWEAK_LEN + T3F_IV_LEN + KL_KEY_LEN]);
-    CryptoPP::HMAC<CryptoPP::SHA3_512> hmac(&enc_key[T3F_KEY_LEN + T3F_TWEAK_LEN + T3F_IV_LEN + KL_KEY_LEN + KL_IV_LEN], HMAC_KEY_LEN);
-    hmac.Update(header, HEADER_LEN);
-    hmac.Update(salt, SALT_LEN);
+    kl_cbc.SetKeyWithIV(kl_secrets, KL_KEY_LEN, &kl_secrets[KL_KEY_LEN]);
+    
+    CryptoPP::SecByteBlock b2b_mac_key(B2B_MAC_KEY_LEN);
+    CryptoPP::byte b2b_info[] = "BLAKE2b 512-bit key";
+    size_t b2b_info_len = strlen((const char *)b2b_info);
+    hkdf.DeriveKey(b2b_mac_key, b2b_mac_key.size(), enc_key, ENC_KEY_LEN, &salt[SALT_LEN * 3], SALT_LEN, b2b_info, b2b_info_len);
+    CryptoPP::BLAKE2b b2b_mac(b2b_mac_key, B2B_MAC_KEY_LEN, &salt[SALT_LEN * 4], B2B_SALT_LEN, header, HEADER_LEN, false, B2B_MAC_HASH_LEN);
+    
+    CryptoPP::SecureWipeBuffer(enc_key.data(), ENC_KEY_LEN);
+    CryptoPP::SecureWipeBuffer(t3f_secrets.data(), T3F_KEY_LEN + T3F_TWEAK_LEN + T3F_IV_LEN);
+    CryptoPP::SecureWipeBuffer(kl_secrets.data(), KL_KEY_LEN + KL_IV_LEN);
+    CryptoPP::SecureWipeBuffer(b2b_mac_key.data(), B2B_MAC_KEY_LEN);
+    
+    b2b_mac.Update(header, HEADER_LEN);
+    b2b_mac.Update(salt, TOTAL_SALT_LEN);
 
     CryptoPP::SecByteBlock chunk(MAX_CHUNK_LEN);
     size_t chunk_len = 0;
@@ -209,12 +235,12 @@ void encrypt(FILE *input, FILE *output, unsigned char *master_key) {
         check_fatal_err(sodium_pad(&chunk_len, chunk, chunk_len, T3F_BLOCK_LEN, MAX_CHUNK_LEN) != 0, "buffer is not large enough.");
         t3f_cbc.ProcessData(chunk, chunk, chunk_len);
         kl_cbc.ProcessData(chunk, chunk, chunk_len);
-        hmac.Update(chunk, chunk_len);
+        b2b_mac.Update(chunk, chunk_len);
         check_fatal_err(fwrite(chunk, 1, chunk_len, output) != chunk_len, "cannot write to file.");
     }
-    unsigned char hash[HMAC_HASH_LEN];
-    hmac.Final(hash);
-    check_fatal_err(fwrite(hash, 1, HMAC_HASH_LEN, output) != HMAC_HASH_LEN, "cannot write HMAC.");
+    unsigned char hash[B2B_MAC_HASH_LEN];
+    b2b_mac.Final(hash);
+    check_fatal_err(fwrite(hash, 1, B2B_MAC_HASH_LEN, output) != B2B_MAC_HASH_LEN, "cannot write HMAC.");
     
     std::cout << "encrypt " << timer.ElapsedTimeAsDouble() << std::endl;
 }
@@ -224,46 +250,70 @@ void decrypt(FILE *input, FILE *output, unsigned char *master_key) {
     unsigned char in_header[HEADER_LEN];
     check_fatal_err(fread(in_header, 1, HEADER_LEN, input) != HEADER_LEN, "cannot read header.");
     check_fatal_err(memcmp(in_header, header, HEADER_LEN) != 0, "wrong header.");
-    unsigned char salt[SALT_LEN];
-    check_fatal_err(fread(salt, 1, SALT_LEN, input) != SALT_LEN, "cannot read salt.");
+    unsigned char salt[TOTAL_SALT_LEN];
+    check_fatal_err(fread(salt, 1, TOTAL_SALT_LEN, input) != TOTAL_SALT_LEN, "cannot read salt.");
                     
     CryptoPP::SecByteBlock enc_key(ENC_KEY_LEN);
     make_key(master_key, enc_key, salt);
+    CryptoPP::SecureWipeBuffer(master_key, MASTER_KEY_LEN);
     
     CryptoPP::Timer timer;
     timer.StartTimer();
-    CryptoPP::ConstByteArrayParameter tweak(&enc_key[T3F_KEY_LEN], T3F_TWEAK_LEN, false);
+    
+    CryptoPP::HKDF<CryptoPP::SHA3_512> hkdf;
+    
+    CryptoPP::SecByteBlock t3f_secrets(T3F_KEY_LEN + T3F_TWEAK_LEN + T3F_IV_LEN);
+    CryptoPP::byte t3f_info[] = "Threefish 1024-bit key, 128-bit tweak, and 1024-bit block";
+    size_t t3f_info_len = strlen((const char *)t3f_info);
+    hkdf.DeriveKey(t3f_secrets, t3f_secrets.size(), enc_key, ENC_KEY_LEN, &salt[SALT_LEN], SALT_LEN, t3f_info, t3f_info_len);
+    CryptoPP::ConstByteArrayParameter tweak(&t3f_secrets[T3F_KEY_LEN], T3F_TWEAK_LEN, false);
     CryptoPP::AlgorithmParameters t3f_params = CryptoPP::MakeParameters(CryptoPP::Name::Tweak(), tweak);
-    CryptoPP::Threefish1024::Decryption t3f(enc_key, T3F_KEY_LEN);
+    CryptoPP::Threefish1024::Decryption t3f(t3f_secrets, T3F_KEY_LEN);
     t3f.SetTweak(t3f_params);
-    CryptoPP::CBC_Mode_ExternalCipher::Decryption t3f_cbc(t3f, &enc_key[T3F_KEY_LEN + T3F_TWEAK_LEN]);
+    CryptoPP::CBC_Mode_ExternalCipher::Decryption t3f_cbc(t3f, &t3f_secrets[T3F_KEY_LEN + T3F_TWEAK_LEN]);
+    
+    CryptoPP::SecByteBlock kl_secrets(KL_KEY_LEN + KL_IV_LEN);
+    CryptoPP::byte kl_info[] = "Kalyna 512-bit key, and 512-bit block";
+    size_t kl_info_len = strlen((const char *)kl_info);
+    hkdf.DeriveKey(kl_secrets, kl_secrets.size(), enc_key, ENC_KEY_LEN, &salt[SALT_LEN * 2], SALT_LEN, kl_info, kl_info_len);
     CryptoPP::CBC_Mode<CryptoPP::Kalyna512>::Decryption kl_cbc;
-    kl_cbc.SetKeyWithIV(&enc_key[T3F_KEY_LEN + T3F_TWEAK_LEN + T3F_IV_LEN], KL_KEY_LEN, &enc_key[T3F_KEY_LEN + T3F_TWEAK_LEN + T3F_IV_LEN + KL_KEY_LEN]);
-    CryptoPP::HMAC<CryptoPP::SHA3_512> hmac(&enc_key[T3F_KEY_LEN + T3F_TWEAK_LEN + T3F_IV_LEN + KL_KEY_LEN + KL_IV_LEN], HMAC_KEY_LEN);
-    hmac.Update(in_header, HEADER_LEN);
-    hmac.Update(salt, SALT_LEN);
+    kl_cbc.SetKeyWithIV(kl_secrets, KL_KEY_LEN, &kl_secrets[KL_KEY_LEN]);
+    
+    CryptoPP::SecByteBlock b2b_mac_key(B2B_MAC_KEY_LEN);
+    CryptoPP::byte b2b_info[] = "BLAKE2b 512-bit key";
+    size_t b2b_info_len = strlen((const char *)b2b_info);
+    hkdf.DeriveKey(b2b_mac_key, b2b_mac_key.size(), enc_key, ENC_KEY_LEN, &salt[SALT_LEN * 3], SALT_LEN, b2b_info, b2b_info_len);
+    CryptoPP::BLAKE2b b2b_mac(b2b_mac_key, B2B_MAC_KEY_LEN, &salt[SALT_LEN * 4], B2B_SALT_LEN, header, HEADER_LEN, false, B2B_MAC_HASH_LEN);
+    
+    CryptoPP::SecureWipeBuffer(enc_key.data(), ENC_KEY_LEN);
+    CryptoPP::SecureWipeBuffer(t3f_secrets.data(), T3F_KEY_LEN + T3F_TWEAK_LEN + T3F_IV_LEN);
+    CryptoPP::SecureWipeBuffer(kl_secrets.data(), KL_KEY_LEN + KL_IV_LEN);
+    CryptoPP::SecureWipeBuffer(b2b_mac_key.data(), B2B_MAC_KEY_LEN);
+    
+    b2b_mac.Update(header, HEADER_LEN);
+    b2b_mac.Update(salt, TOTAL_SALT_LEN);
     
     CryptoPP::SecByteBlock chunk(MAX_CHUNK_LEN);
     size_t chunk_len = 0;
-    CryptoPP::SecByteBlock read_hash(HMAC_HASH_LEN);
+    CryptoPP::SecByteBlock read_hash(B2B_MAC_HASH_LEN);
     while ((chunk_len = fread(chunk, 1, MAX_CHUNK_LEN, input)) > 0) {
         check_fatal_err(chunk_len != MAX_CHUNK_LEN && ferror(input), "cannot read input.");
-        if (chunk_len < MAX_CHUNK_LEN && chunk_len > HMAC_HASH_LEN) {
-            chunk_len -= HMAC_HASH_LEN;
-            memcpy(read_hash, &chunk[chunk_len], HMAC_HASH_LEN);
-        } else if (chunk_len == HMAC_HASH_LEN) {
-            memcpy(read_hash, chunk, HMAC_HASH_LEN);
+        if (chunk_len < MAX_CHUNK_LEN && chunk_len > B2B_MAC_HASH_LEN) {
+            chunk_len -= B2B_MAC_HASH_LEN;
+            memcpy(read_hash, &chunk[chunk_len], B2B_MAC_HASH_LEN);
+        } else if (chunk_len == B2B_MAC_HASH_LEN) {
+            memcpy(read_hash, chunk, B2B_MAC_HASH_LEN);
             break;
         }
-        hmac.Update(chunk, chunk_len);
+        b2b_mac.Update(chunk, chunk_len);
         kl_cbc.ProcessData(chunk, chunk, chunk_len);
         t3f_cbc.ProcessData(chunk, chunk, chunk_len);
         check_fatal_err(sodium_unpad(&chunk_len, chunk, chunk_len, T3F_BLOCK_LEN) != 0, "incorrect padding.");
         check_fatal_err(fwrite(chunk, 1, chunk_len, output) != chunk_len, "cannot write to file.");
     }
-    unsigned char hash[HMAC_HASH_LEN];
-    hmac.Final(hash);
-    check_fatal_err(memcmp(hash, read_hash, HMAC_HASH_LEN) != 0, "wrong HMAC.");
+    unsigned char hash[B2B_MAC_HASH_LEN];
+    b2b_mac.Final(hash);
+    check_fatal_err(memcmp(hash, read_hash, B2B_MAC_HASH_LEN) != 0, "wrong MAC.");
                     
     std::cout << "decrypt " << timer.ElapsedTimeAsDouble() << std::endl;
 }
