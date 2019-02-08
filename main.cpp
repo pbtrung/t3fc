@@ -18,7 +18,7 @@ const unsigned int T3F_TWEAK_LEN = 16;
 const unsigned int T3F_KEY_LEN = 128;
 const unsigned int T3F_BLOCK_LEN = 128;
 const unsigned int T3F_IV_LEN = 128;
-const unsigned int NUM_BLOCKS = 2048;
+const unsigned int NUM_BLOCKS = 8192;
 const unsigned int CHUNK_LEN = NUM_BLOCKS * T3F_BLOCK_LEN;
 const unsigned int MAX_CHUNK_LEN = CHUNK_LEN + T3F_BLOCK_LEN;
 
@@ -180,6 +180,13 @@ int main(int argc, char **argv) {
     return EXIT_SUCCESS;
 }
 
+CryptoPP::byte t3f_info[] = "Threefish 1024-bit key, 128-bit tweak, and 1024-bit block";
+size_t t3f_info_len = strlen((const char *)t3f_info);
+CryptoPP::byte kl_info[] = "Kalyna 512-bit key and 512-bit block";
+size_t kl_info_len = strlen((const char *)kl_info);
+CryptoPP::byte hmac_info[] = "HMAC-SHA3 512-bit key and 512-bit hash";
+size_t hmac_info_len = strlen((const char *)hmac_info);
+
 void encrypt(FILE *input, FILE *output, unsigned char *master_key) {
 
     check_fatal_err(fwrite(header, 1, HEADER_LEN, output) != HEADER_LEN, "cannot write header.");
@@ -197,8 +204,6 @@ void encrypt(FILE *input, FILE *output, unsigned char *master_key) {
     CryptoPP::HKDF<CryptoPP::SHA3_512> hkdf;
     
     CryptoPP::SecByteBlock t3f_secrets(T3F_KEY_LEN + T3F_TWEAK_LEN + T3F_IV_LEN);
-    CryptoPP::byte t3f_info[] = "Threefish 1024-bit key, 128-bit tweak, and 1024-bit block";
-    size_t t3f_info_len = strlen((const char *)t3f_info);
     hkdf.DeriveKey(t3f_secrets, t3f_secrets.size(), enc_key, ENC_KEY_LEN, &salt[SALT_LEN], SALT_LEN, t3f_info, t3f_info_len);
     CryptoPP::ConstByteArrayParameter tweak(&t3f_secrets[T3F_KEY_LEN], T3F_TWEAK_LEN, false);
     CryptoPP::AlgorithmParameters t3f_params = CryptoPP::MakeParameters(CryptoPP::Name::Tweak(), tweak);
@@ -207,15 +212,11 @@ void encrypt(FILE *input, FILE *output, unsigned char *master_key) {
     CryptoPP::CBC_Mode_ExternalCipher::Encryption t3f_cbc(t3f, &t3f_secrets[T3F_KEY_LEN + T3F_TWEAK_LEN]);
     
     CryptoPP::SecByteBlock kl_secrets(KL_KEY_LEN + KL_IV_LEN);
-    CryptoPP::byte kl_info[] = "Kalyna 512-bit key and 512-bit block";
-    size_t kl_info_len = strlen((const char *)kl_info);
     hkdf.DeriveKey(kl_secrets, kl_secrets.size(), enc_key, ENC_KEY_LEN, &salt[SALT_LEN * 2], SALT_LEN, kl_info, kl_info_len);
     CryptoPP::CBC_Mode<CryptoPP::Kalyna512>::Encryption kl_cbc;
     kl_cbc.SetKeyWithIV(kl_secrets, KL_KEY_LEN, &kl_secrets[KL_KEY_LEN]);
     
     CryptoPP::SecByteBlock hmac_key(HMAC_KEY_LEN);
-    CryptoPP::byte hmac_info[] = "HMAC-SHA3 512-bit key and 512-bit hash";
-    size_t hmac_info_len = strlen((const char *)hmac_info);
     hkdf.DeriveKey(hmac_key, hmac_key.size(), enc_key, ENC_KEY_LEN, &salt[SALT_LEN * 3], SALT_LEN, hmac_info, hmac_info_len);
     CryptoPP::HMAC<CryptoPP::SHA3_512> hmac(hmac_key, HMAC_KEY_LEN);
     
@@ -262,8 +263,6 @@ void decrypt(FILE *input, FILE *output, unsigned char *master_key) {
     CryptoPP::HKDF<CryptoPP::SHA3_512> hkdf;
     
     CryptoPP::SecByteBlock t3f_secrets(T3F_KEY_LEN + T3F_TWEAK_LEN + T3F_IV_LEN);
-    CryptoPP::byte t3f_info[] = "Threefish 1024-bit key, 128-bit tweak, and 1024-bit block";
-    size_t t3f_info_len = strlen((const char *)t3f_info);
     hkdf.DeriveKey(t3f_secrets, t3f_secrets.size(), enc_key, ENC_KEY_LEN, &salt[SALT_LEN], SALT_LEN, t3f_info, t3f_info_len);
     CryptoPP::ConstByteArrayParameter tweak(&t3f_secrets[T3F_KEY_LEN], T3F_TWEAK_LEN, false);
     CryptoPP::AlgorithmParameters t3f_params = CryptoPP::MakeParameters(CryptoPP::Name::Tweak(), tweak);
@@ -272,15 +271,11 @@ void decrypt(FILE *input, FILE *output, unsigned char *master_key) {
     CryptoPP::CBC_Mode_ExternalCipher::Decryption t3f_cbc(t3f, &t3f_secrets[T3F_KEY_LEN + T3F_TWEAK_LEN]);
     
     CryptoPP::SecByteBlock kl_secrets(KL_KEY_LEN + KL_IV_LEN);
-    CryptoPP::byte kl_info[] = "Kalyna 512-bit key and 512-bit block";
-    size_t kl_info_len = strlen((const char *)kl_info);
     hkdf.DeriveKey(kl_secrets, kl_secrets.size(), enc_key, ENC_KEY_LEN, &salt[SALT_LEN * 2], SALT_LEN, kl_info, kl_info_len);
     CryptoPP::CBC_Mode<CryptoPP::Kalyna512>::Decryption kl_cbc;
     kl_cbc.SetKeyWithIV(kl_secrets, KL_KEY_LEN, &kl_secrets[KL_KEY_LEN]);
     
     CryptoPP::SecByteBlock hmac_key(HMAC_KEY_LEN);
-    CryptoPP::byte hmac_info[] = "HMAC-SHA3 512-bit key and 512-bit hash";
-    size_t hmac_info_len = strlen((const char *)hmac_info);
     hkdf.DeriveKey(hmac_key, hmac_key.size(), enc_key, ENC_KEY_LEN, &salt[SALT_LEN * 3], SALT_LEN, hmac_info, hmac_info_len);
     CryptoPP::HMAC<CryptoPP::SHA3_512> hmac(hmac_key, HMAC_KEY_LEN);
     
