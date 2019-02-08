@@ -17,7 +17,7 @@ const unsigned int T3F_TWEAK_LEN = 16;
 const unsigned int T3F_KEY_LEN = 128;
 const unsigned int T3F_BLOCK_LEN = 128;
 const unsigned int T3F_IV_LEN = 128;
-const unsigned int NUM_BLOCKS = 10000;
+const unsigned int NUM_BLOCKS = 2048;
 const size_t CHUNK_LEN = NUM_BLOCKS * T3F_BLOCK_LEN;
 const size_t MAX_CHUNK_LEN = CHUNK_LEN + T3F_BLOCK_LEN;
 
