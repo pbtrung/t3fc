@@ -17,9 +17,9 @@ const unsigned int T3F_TWEAK_LEN = 16;
 const unsigned int T3F_KEY_LEN = 128;
 const unsigned int T3F_BLOCK_LEN = 128;
 const unsigned int T3F_IV_LEN = 128;
-const unsigned int NUM_BLOCKS = 2048;
-const unsigned int CHUNK_LEN = NUM_BLOCKS * T3F_BLOCK_LEN;
-const unsigned int MAX_CHUNK_LEN = CHUNK_LEN + T3F_BLOCK_LEN;
+const unsigned int NUM_BLOCKS = 10000;
+const size_t CHUNK_LEN = NUM_BLOCKS * T3F_BLOCK_LEN;
+const size_t MAX_CHUNK_LEN = CHUNK_LEN + T3F_BLOCK_LEN;
 
 const unsigned int MASTER_KEY_LEN = 256;
 const unsigned int SALT_LEN = 64;
@@ -36,8 +36,8 @@ const unsigned int ENC_KEY_LEN = T3F_KEY_LEN + T3F_TWEAK_LEN + T3F_IV_LEN +
 
 const unsigned char header[HEADER_LEN] = {'t', '3', 'f', 'c', '0', '1'};
 
-const uint32_t T = 3;
-const uint32_t M = 1 << 10;
+const uint32_t T = 9;
+const uint32_t M = 1 << 19;
 const uint32_t P = 1;
 
 void check_fatal_err(bool cond, const char *msg) {
